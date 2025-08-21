@@ -155,10 +155,8 @@ int WebServer::wait_epoll() {
             return -1;
         }
         //ET模式触发
-        //et(resEvents, resNum, m_epollfd, m_listenfd);
-        //LT模式触发
-        lt(resEvents, resNum, m_epollfd, m_listenfd);
-
+        et(resEvents, resNum, m_epollfd, m_listenfd);
     }
+    
     return 0;
 }

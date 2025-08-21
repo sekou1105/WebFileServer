@@ -1,6 +1,6 @@
 CXX ?= g++
 
-fileserver: main.cpp ./fileserver/fileserver.cpp ./threadpool/threadpool.cpp ./log/log.cpp ./utils/utils.cpp
+fileserver: main.cpp ./fileserver/fileserver.cpp ./threadpool/threadpool.cpp ./log/log.cpp ./utils/utils.cpp ./message/message.cpp
 	$(CXX) -std=c++11  $^ -lpthread  -o main
 
 clean:
