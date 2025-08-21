@@ -27,6 +27,11 @@ public:
     void write_log(int level, const char *format, ...);
 
     void flush(void);
+    
+    // 运行时状态管理
+    bool is_open() const;
+    void set_close_log(int close_log);
+    void set_async(int max_queue_size);
      
 private:
     LOG();
@@ -52,9 +57,14 @@ private:
 
 };
 
-#define LOG_DEBUG(format, ...) if(0 == m_close_log) { LOG::get_instance()->write_log(0, "[%s:%d][%s] " format, __FILE__, __LINE__, __func__, ##__VA_ARGS__); LOG::get_instance()->flush(); }
-#define LOG_INFO(format, ...)  if(0 == m_close_log) { LOG::get_instance()->write_log(1, "[%s:%d][%s] " format, __FILE__, __LINE__, __func__, ##__VA_ARGS__); LOG::get_instance()->flush(); }
-#define LOG_WARN(format, ...)  if(0 == m_close_log) { LOG::get_instance()->write_log(2, "[%s:%d][%s] " format, __FILE__, __LINE__, __func__, ##__VA_ARGS__); LOG::get_instance()->flush(); }
-#define LOG_ERROR(format, ...) if(0 == m_close_log) { LOG::get_instance()->write_log(3, "[%s:%d][%s] " format, __FILE__, __LINE__, __func__, ##__VA_ARGS__); LOG::get_instance()->flush(); }
+// C 风格的初始化与运行时修改接口（在 log.h 暴露，便于全局调用）
+void InitLog(const char *file_name = "./ServerLog", int close_log = 0, int log_buf_size = 8192, int split_lines = 5000000, int max_queue_size = 0);
+void SetLogClose(int close_log);
+void SetLogAsync(int max_queue_size);
+
+#define LOG_DEBUG(format, ...) if(LOG::get_instance()->is_open()) { LOG::get_instance()->write_log(0, "[%s:%d][%s] " format, __FILE__, __LINE__, __func__, ##__VA_ARGS__); LOG::get_instance()->flush(); }
+#define LOG_INFO(format, ...)  if(LOG::get_instance()->is_open()) { LOG::get_instance()->write_log(1, "[%s:%d][%s] " format, __FILE__, __LINE__, __func__, ##__VA_ARGS__); LOG::get_instance()->flush(); }
+#define LOG_WARN(format, ...)  if(LOG::get_instance()->is_open()) { LOG::get_instance()->write_log(2, "[%s:%d][%s] " format, __FILE__, __LINE__, __func__, ##__VA_ARGS__); LOG::get_instance()->flush(); }
+#define LOG_ERROR(format, ...) if(LOG::get_instance()->is_open()) { LOG::get_instance()->write_log(3, "[%s:%d][%s] " format, __FILE__, __LINE__, __func__, ##__VA_ARGS__); LOG::get_instance()->flush(); }
 
 #endif // __LOG_H__

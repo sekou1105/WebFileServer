@@ -64,6 +64,22 @@ bool LOG::init(const char *file_name, int close_log, int log_buf_size, int split
     return true;
 }
 
+bool LOG::is_open() const {
+    return m_close_log == 0;
+}
+
+void LOG::set_close_log(int close_log) {
+    m_mutex.lock();
+    m_close_log = close_log;
+    m_mutex.unlock();
+}
+
+void LOG::set_async(int max_queue_size) {
+    m_mutex.lock();
+    m_is_async = max_queue_size >= 1;
+    m_mutex.unlock();
+}
+
 void LOG::write_log(int level, const char *format, ...) {
     struct timeval now = {0, 0};
     gettimeofday(&now, NULL);
@@ -122,4 +138,17 @@ void LOG::flush(void)
     //强制刷新写入流缓冲区
     fflush(m_fp);
     m_mutex.unlock();
+}
+
+// C 风格的便捷接口实现
+void InitLog(const char *file_name, int close_log, int log_buf_size, int split_lines, int max_queue_size) {
+    LOG::get_instance()->init(file_name, close_log, log_buf_size, split_lines, max_queue_size);
+}
+
+void SetLogClose(int close_log) {
+    LOG::get_instance()->set_close_log(close_log);
+}
+
+void SetLogAsync(int max_queue_size) {
+    LOG::get_instance()->set_async(max_queue_size);
 }

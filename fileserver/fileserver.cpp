@@ -12,22 +12,7 @@ WebServer::~WebServer() {
 
 }
 
-void WebServer::init(int close_log, int write_log) {
-    m_close_log = close_log;
-    m_log_write = write_log;
-}
-
-void WebServer::log_write() {
-    if (0 == m_close_log)
-    {
-        //初始化日志
-        if (1 == m_log_write)
-            LOG::get_instance()->init("./ServerLog", m_close_log, 2000, 800000, 800); //异步
-        else
-            LOG::get_instance()->init("./ServerLog", m_close_log, 2000, 800000, 0); //同步
-
-            LOG_INFO("This is an info log, init success");
-    }
+void WebServer::init() {
 }
 
 int WebServer::create_listenfd(int port, const char *ip) {

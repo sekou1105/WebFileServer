@@ -19,10 +19,7 @@ public:
 
     ~WebServer();
 
-    void init(int close_log, int write_log);
-    
-    //初始化日志
-    void log_write();
+    void init();
 
     //创建监听套接字，等待客户端连接，并开启监听
     int create_listenfd(int port, const char *ip = nullptr);
@@ -47,10 +44,6 @@ public:
 
     //创建线程池
     //int createThreadPool(int threadNum = 8);
-
-public:
-    int m_log_write;
-    int m_close_log;
 
 private:
     int m_listenfd;             //服务器端的套接字

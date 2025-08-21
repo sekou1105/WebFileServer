@@ -1,15 +1,14 @@
 #include "./fileserver/fileserver.h"
 
-// 全局变量
-int m_close_log = 0;  // 0=开启日志, 1=关闭日志
-
 int main(int argc, char *argv[])
 {   
     WebServer server;
 
-    server.init(0, 0);
+    // 初始化日志：默认同步写入，可通过 SetLogAsync/SetLogClose 运行时修改
+    InitLog("./ServerLog", 0, 2000, 800000, 0);
+    LOG_INFO("This is an info log, init success");
 
-    server.log_write();
+    server.init();
 
     int port = 8888;
     int ret = server.create_listenfd(port);

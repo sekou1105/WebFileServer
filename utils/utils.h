@@ -12,8 +12,6 @@
 
 #define BUFF_SIZE 10
 
-extern int m_close_log;
-
 //设置文件描述符为非阻塞
 int set_non_blocking(int fd);
 
