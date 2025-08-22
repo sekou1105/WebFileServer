@@ -454,7 +454,7 @@ void HandleSend::process() {
         }
 
         // 初始状态中，根据资操作确定所发送数据的内容
-        if(opera == "/"){                   //如果是根目录，返回文件夹中的所有文件名字
+        if(opera == "/" || opera == "list"){                   //如果是根目录，返回文件夹中的所有文件名字
             // 添加状态行
             responseStatus[m_clientFd].m_beforeBodyMsg = getStatusLine("HTTP/1.1", "200", "OK");
 
@@ -477,7 +477,7 @@ void HandleSend::process() {
             responseStatus[m_clientFd].m_bodyType = JSON_TYPE;      // 设置消息体的类型
             responseStatus[m_clientFd].m_status = HANDLE_HEAD;      // 设置状态为等待发送消息头
             responseStatus[m_clientFd].m_curStatusHasSendLen = 0;   // 设置当前已发送的数据长度为0
-            LOG_INFO("客户端 %d 的响应消息用来返回文件列表JSON，状态行和消息体已构建完成", m_clientFd);
+            LOG_INFO("客户端 %d 的响应消息用来返回文件列表 JSON ,状态行和消息体已构建完成", m_clientFd);
 
         }else if(opera == "download"){      // 下载文件
             // 构建下载文件的响应，向用户发送文件
