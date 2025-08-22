@@ -6,9 +6,7 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 
-#include "../log/log.h"
-#include "../threadpool/threadpool.h"
-#include "../utils/utils.h"
+#include "../event/myevent.h"
 
 #define MAX_RESEVENT_SIZE 1024   // 事件的最大个数
 

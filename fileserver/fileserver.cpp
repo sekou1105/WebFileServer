@@ -154,8 +154,57 @@ int WebServer::wait_epoll() {
             LOG_ERROR("Epoll wait failed");
             return -1;
         }
-        //ET模式触发
-        et(resEvents, resNum, m_epollfd, m_listenfd);
+        // 分发事件
+        for(int i = 0; i < resNum; ++i){
+            int curfd = resEvents[i].data.fd;
+            uint32_t ev = resEvents[i].events;
+
+            // 监听套接字，有新连接
+            if(curfd == m_listenfd){
+                AcceptConn acceptEvent(m_listenfd, m_epollfd);
+                acceptEvent.process();
+                continue;
+            }
+
+            // 统一事件源的信号管道
+            if(curfd == eventHandlerPipe[0]){
+                // 读取所有的信号字节
+                char sigbuf[64];
+                while(true){
+                    int n = recv(eventHandlerPipe[0], sigbuf, sizeof(sigbuf), 0);
+                    if(n <= 0){
+                        break;
+                    }
+                    for(int k = 0; k < n; ++k){
+                        int signo = static_cast<unsigned char>(sigbuf[k]);
+                        if(signo == SIGINT || signo == SIGTERM){
+                            is_stop = true;
+                        }
+                    }
+                }
+                continue;
+            }
+
+            // 错误或挂断，直接关闭
+            if(ev & (EPOLLHUP | EPOLLERR)){
+                deleteWaitFd(m_epollfd, curfd);
+                shutdown(curfd, SHUT_RDWR);
+                close(curfd);
+                continue;
+            }
+
+            // 可读事件 -> 处理请求读取/解析（含文件上传）
+            if(ev & EPOLLIN){
+                HandleRecv recvEvent(curfd, m_epollfd);
+                recvEvent.process();
+            }
+
+            // 可写事件 -> 处理响应发送（文件列表/下载/重定向）
+            if(ev & EPOLLOUT){
+                HandleSend sendEvent(curfd, m_epollfd);
+                sendEvent.process();
+            }
+        }
     }
     
     return 0;

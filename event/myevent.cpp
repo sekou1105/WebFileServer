@@ -43,12 +43,15 @@ void AcceptConn::process(){
     // 将连接加入到监听，客户端套接字都设置为 EPOLLET 和 EPOLLONESHOT
     addWaitFd(m_epollFd, accFd, true, true);
     
-    LOG_INFO("接受 %d:%d 新连接 %d 成功", m_clientAddr.sin_addr.s_addr, m_clientAddr.sin_port, accFd);
+    LOG_INFO("接受 %s:%d 新连接 %d 成功", 
+        inet_ntoa(m_clientAddr.sin_addr),  // 将网络字节序的IP地址转换为字符串
+        ntohs(m_clientAddr.sin_port),      // 将网络字节序的端口号转换为主机字节序
+        accFd);
 }
 
 // 处理客户端发送的请求
 void HandleRecv::process(){
-    LOG_INFO("开始处理客户端 %d 的一个 HandleRecv 事件");
+    LOG_INFO("开始处理客户端 %d 的一个 HandleRecv 事件", m_clientFd);
     // 获取 Request 对象，保存到m_clientFd索引的requestStatus中（没有时会自动创建一个新的）
     requestStatus[m_clientFd];
 
@@ -60,11 +63,19 @@ void HandleRecv::process(){
         // 循环接收数据，直到缓冲区读取不到数据或请求消息处理完成时退出循环
         recvLen = recv(m_clientFd, buf, 2048, 0);
 
-        // 对方关闭连接，直接断开连接，设置当前状态为 HANDLE_ERROR，再退出循环
+        // 对方关闭连接，走正常关闭流程：降级为 info，移除监听并关闭 fd，清理上下文后直接返回
         if(recvLen == 0){
             LOG_INFO("客户端 %d 关闭连接", m_clientFd);
-            requestStatus[m_clientFd].m_status = HANDLE_ERROR;
-            break;
+            // 从 epoll 移除并关闭连接
+            deleteWaitFd(m_epollFd, m_clientFd);
+            shutdown(m_clientFd, SHUT_RDWR);
+            close(m_clientFd);
+            // 清理可能存在的请求上下文（若此前通过下标已创建）
+            auto it = requestStatus.find(m_clientFd);
+            if(it != requestStatus.end()){
+                requestStatus.erase(it);
+            }
+            return;
         }
 
         //如果缓冲区的数据已经读完，退出读数据的状态
@@ -158,7 +169,7 @@ void HandleRecv::process(){
                 if(requestStatus[m_clientFd].m_msgHeader["Content-Type"] == "multipart/form-data"){  // 如果发送的是文件
                     // 如果处于等待处理文件开始标志的状态，查找 \r\n 判断标志部分是否已经接收
                     if(requestStatus[m_clientFd].fileMsgStatus == FILE_BEGIN_FLAG){
-                        std::cout << outHead("info") << "客户端 " << m_clientFd << " 的 POST 请求用于上传文件，寻找文件头开始边界..." << std::endl;
+                        LOG_INFO("客户端 %d 的 POST 请求用于上传文件，寻找文件头开始边界...", m_clientFd);
                         // 查找 \r\n
                         endIndex = requestStatus[m_clientFd].m_recvMsg.find("\r\n");
 
@@ -169,13 +180,13 @@ void HandleRecv::process(){
                             if(flagStr == "--" +requestStatus[m_clientFd].m_msgHeader["boundary"]){  // 如果等于 "--" 加边界，进入下一个状态
                                 requestStatus[m_clientFd].fileMsgStatus = FILE_HEAD;               // 进入下一个状态
                                 requestStatus[m_clientFd].m_recvMsg.erase(0, endIndex + 2);          // 将开始标志行删除（包括 /r/n）
-                                std::cout << outHead("info") << "客户端 " << m_clientFd << " 的 POST 请求体中找到文件头开始边界，正在处理文件头..." << std::endl;
+                                LOG_INFO("客户端 %d 的 POST 请求体中找到文件头开始边界，正在处理文件头...", m_clientFd);
                             }else{
                                 // 如果和边界不同，表示出错，直接返回重定向报文，重新请求文件列表
                                 responseStatus[m_clientFd].m_bodyFileName = "/redirect"; 
                                 modifyWaitFd(m_epollFd, m_clientFd, true, true, true);   // 重置可读事件和可写事件，用于发送重定向回复报文
                                 requestStatus[m_clientFd].m_status = HADNLE_COMPLETE;
-                                std::cout << outHead("error") << "客户端 " << m_clientFd << " 的 POST 请求体中没有找到文件头开始边界，添加重定向 Response 写事件，使客户端重定向到文件列表" << std::endl;
+                                LOG_ERROR("客户端 %d 的 POST 请求体中没有找到文件头开始边界，添加重定向 Response 写事件，使客户端重定向到文件列表", m_clientFd);
                                 break;
                             }
                         }
@@ -194,7 +205,7 @@ void HandleRecv::process(){
                                 // 检测是否为空行，如果是空行，修改状态，退出
                                 if(strLine == "\r\n"){
                                     requestStatus[m_clientFd].fileMsgStatus = FILE_CONTENT;
-                                    std::cout << outHead("info") << "客户端 " << m_clientFd << " 的 POST 请求体中文件头处理成功，正在接收并保存文件内容..." << std::endl;
+                                    LOG_INFO("客户端 %d 的 POST 请求体中文件头处理成功，正在接收并保存文件内容...", m_clientFd);
                                     break;
                                 }
                                 // 查找 strLine 是否包含 filename
@@ -204,7 +215,7 @@ void HandleRecv::process(){
                                     for(int i = 0; strLine[i] != '\"'; ++i){                                 // 保存文件名
                                         requestStatus[m_clientFd].m_recvFileName += strLine[i];
                                     }
-                                    std::cout << outHead("info") << "客户端 " << m_clientFd << " 的 POST 请求体中找到文件名字 " << requestStatus[m_clientFd].m_recvFileName << " ，继续处理文件头..." << std::endl; 
+                                    LOG_INFO("客户端 %d 的 POST 请求体中找到文件名字 %s ，继续处理文件头...", m_clientFd, requestStatus[m_clientFd].m_recvFileName.c_str()); 
                                 }
                             }else{   // 如果没有找到，表示消息还没有接收完整，退出，等待下一轮的事件中继续处理
                                 break;
@@ -218,7 +229,7 @@ void HandleRecv::process(){
                         // 首先以二进制追加的方式打开文件
                         std::ofstream ofs("filedir/" + requestStatus[m_clientFd].m_recvFileName, std::ios::out | std::ios::app | std::ios::binary);
                         if(!ofs){
-                            std::cout << outHead("error") << "客户端 " << m_clientFd << " 的 POST 请求体所需要保存的文件打开失败，正在重新打开文件..." << std::endl;
+                            LOG_ERROR("客户端 %d 的 POST 请求体所需要保存的文件打开失败，正在重新打开文件...", m_clientFd);
                             break;
                         }
 
@@ -238,7 +249,7 @@ void HandleRecv::process(){
                                     if(requestStatus[m_clientFd].m_recvMsg.substr(endIndex, boundarySecLen) ==
                                                     "\r\n--" + requestStatus[m_clientFd].m_msgHeader["boundary"] + "--\r\n"){
                                         if(endIndex == 0){                  // 表示边界前的数据都已经写入文件，设置文件接收完成，进入下一个状态
-                                            std::cout << outHead("info") << "客户端 " << m_clientFd << " 的 POST 请求体中的文件数据接收并保存完成" << std::endl;
+                                            LOG_INFO("客户端 %d 的 POST 请求体中的文件数据接收并保存完成", m_clientFd);
                                             requestStatus[m_clientFd].fileMsgStatus = FILE_COMPLATE;
                                             break;
                                         }
@@ -279,7 +290,7 @@ void HandleRecv::process(){
                         responseStatus[m_clientFd].m_bodyFileName = "/redirect"; 
                         modifyWaitFd(m_epollFd, m_clientFd, true, true, true);   // 完成后重置可读事件和可写事件，用于发送重定向回复报文
                         requestStatus[m_clientFd].m_status = HADNLE_COMPLETE;
-                        std::cout << outHead("info") << "客户端 " << m_clientFd << " 的 POST 请求体处理完成，添加 Response 写事件，发送重定向报文刷新文件列表" << std::endl;
+                        LOG_INFO("客户端 %d 的 POST 请求体处理完成，添加 Response 写事件，发送重定向报文刷新文件列表", m_clientFd);
                         break;
                     }
                 }else{    // POST 是其他类型的数据
@@ -287,7 +298,7 @@ void HandleRecv::process(){
                     responseStatus[m_clientFd].m_bodyFileName = "/redirect";
                     modifyWaitFd(m_epollFd, m_clientFd, true, true, true);
                     requestStatus[m_clientFd].m_status = HADNLE_COMPLETE;
-                    std::cout << outHead("error") << "客户端 " << m_clientFd << " 的 POST 请求中接收到不能处理的数据，添加 Response 写事件，返回重定向到文件列表的报文" << std::endl;
+                    LOG_ERROR("客户端 %d 的 POST 请求中接收到不能处理的数据，添加 Response 写事件，返回重定向到文件列表的报文", m_clientFd);
                     break;
                 }
             }
@@ -296,11 +307,11 @@ void HandleRecv::process(){
     }
 
     if(requestStatus[m_clientFd].m_status == HADNLE_COMPLETE){     // 如果请求处理完成，将该套接字对应的请求删除
-        std::cout << outHead("info") << "客户端 " << m_clientFd << " 的请求消息处理成功" << std::endl;
+        LOG_INFO("客户端 %d 的请求消息处理成功", m_clientFd);
         requestStatus.erase(m_clientFd);
     }else if(requestStatus[m_clientFd].m_status == HANDLE_ERROR){        
         // 请求处理错误，关闭该文件描述符，将该套接字对应的请求删除，从监听列表中删除该文件描述符
-        std::cout << outHead("error") << "客户端 " << m_clientFd << " 的请求消息处理失败，关闭连接" << std::endl;
+        LOG_ERROR("客户端 %d 的请求消息处理失败，关闭连接", m_clientFd);
         // 先删除监听的文件描述符
         deleteWaitFd(m_epollFd, m_clientFd);
         // 再关闭文件描述符
@@ -408,10 +419,10 @@ std::string HandleSend::getMessageHeader(const std::string contentLength, const 
 
 // 处理向客户端发送数据
 void HandleSend::process() {
-    std::cout << outHead("info") << "开始处理客户端 " << m_clientFd << " 的一个 HandleSend 事件" << std::endl;
+    LOG_INFO("开始处理客户端 %d 的一个 HandleSend 事件", m_clientFd);
     // 如果该套接字没有需要处理的 Response 消息，直接退出
     if(responseStatus.find(m_clientFd) == responseStatus.end()){
-        std::cout << outHead("info") << "客户端 " << m_clientFd << " 没有要处理的响应消息" << std::endl;
+        LOG_INFO("客户端 %d 没有要处理的响应消息", m_clientFd);
         return;
     }
 
@@ -463,10 +474,10 @@ void HandleSend::process() {
 
 
             // 设置标识，转换到发送数据的状态
-            responseStatus[m_clientFd].m_bodyType = HTML_TYPE;      // 设置消息体的类型
+            responseStatus[m_clientFd].m_bodyType = JSON_TYPE;      // 设置消息体的类型
             responseStatus[m_clientFd].m_status = HANDLE_HEAD;      // 设置状态为等待发送消息头
             responseStatus[m_clientFd].m_curStatusHasSendLen = 0;   // 设置当前已发送的数据长度为0
-            std::cout << outHead("info") << "客户端 " << m_clientFd << " 的响应消息用来返回文件列表页面，状态行和消息体已构建完成" << std::endl;
+            LOG_INFO("客户端 %d 的响应消息用来返回文件列表JSON，状态行和消息体已构建完成", m_clientFd);
 
         }else if(opera == "download"){      // 下载文件
             // 构建下载文件的响应，向用户发送文件
@@ -481,7 +492,7 @@ void HandleSend::process() {
             responseStatus[m_clientFd].m_fileMsgFd = open(("filedir/" + decodedFilename).c_str(), O_RDONLY);
             // 获取所传递文件的描述符
             if(responseStatus[m_clientFd].m_fileMsgFd == -1){                  // 文件打开失败时，退出当前函数（避免下面关闭文件造成错误），并重置写事件，在下次进入时回复重定向报文
-                std::cout << outHead("error") << "客户端 " << m_clientFd << " 的请求消息要下载文件 " << filename << " ，但是文件打开失败，退出当前函数，重新进入用于返回重定向报文，重定向到文件列表" << std::endl;
+                LOG_ERROR("客户端 %d 的请求消息要下载文件 %s ，但是文件打开失败，退出当前函数，重新进入用于返回重定向报文，重定向到文件列表", m_clientFd, filename.c_str());
                 responseStatus[m_clientFd] = Response();                     // 重置 Response
                 responseStatus[m_clientFd].m_bodyFileName = "/redirect";
                 modifyWaitFd(m_epollFd, m_clientFd, true, true, true);       // 重置写事件
@@ -505,23 +516,23 @@ void HandleSend::process() {
                 responseStatus[m_clientFd].m_status = HANDLE_HEAD;      // 设置状态为处理消息头
                 responseStatus[m_clientFd].m_curStatusHasSendLen = 0;   // 设置当前已发送的数据长度为0
 
-                std::cout << outHead("info") << "客户端 " << m_clientFd << " 的请求消息要下载文件 " << filename << " ，文件打开成功，根据文件构建响应消息状态行和头部信息成功" << std::endl;
+                LOG_INFO("客户端 %d 的请求消息要下载文件 %s ，文件打开成功，根据文件构建响应消息状态行和头部信息成功", m_clientFd, filename.c_str());
                 
             }
         }else if(opera == "delete"){        // 删除文件
             // 在本地删除文件
             int ret = remove(("filedir/" + filename).c_str());
             if(ret != 0){
-                std::cout << outHead("error") << "客户端 " << m_clientFd << " 的请求消息要删除文件 " << filename << " 但是文件删除失败" << std::endl;
+                LOG_ERROR("客户端 %d 的请求消息要删除文件 %s 但是文件删除失败", m_clientFd, filename.c_str());
             }else{
-                std::cout << outHead("info") << "客户端 " << m_clientFd << " 的请求消息要删除文件 " << filename << " 且文件删除成功" << std::endl;
+                LOG_INFO("客户端 %d 的请求消息要删除文件 %s 且文件删除成功", m_clientFd, filename.c_str());
             }
 
             // 不管文件删除成功还是失败，都重定向到文件列表页面
             responseStatus[m_clientFd] = Response();                     // 重置 Response
             responseStatus[m_clientFd].m_bodyFileName = "/redirect";       // 设置为重定向报文
 
-            std::cout << outHead("info") << "客户端 " << m_clientFd << " 的请求消息处理完成，发送重定向报文" << std::endl;
+            LOG_INFO("客户端 %d 的请求消息处理完成，发送重定向报文", m_clientFd);
 
             // 重置 EPOLLONESHOT，之后直接退出函数，使得可以再次进入函数重新构建文件列表的响应消息
             modifyWaitFd(m_epollFd, m_clientFd, true, true, true);
@@ -542,7 +553,7 @@ void HandleSend::process() {
             responseStatus[m_clientFd].m_bodyType = EMPTY_TYPE;    // 设置消息体的类型
             responseStatus[m_clientFd].m_status = HANDLE_HEAD;     // 设置状态为处理消息头
             responseStatus[m_clientFd].m_curStatusHasSendLen = 0;   // 设置当前已发送的数据长度为0
-            std::cout << outHead("info") << "客户端 " << m_clientFd << " 的响应报文是重定向报文，状态行和消息首部已构建完成" << std::endl;
+            LOG_INFO("客户端 %d 的响应报文是重定向报文，状态行和消息首部已构建完成", m_clientFd);
         }
     }
 
@@ -557,7 +568,7 @@ void HandleSend::process() {
                 if(errno != EAGAIN){
                     // 如果不是缓冲区满，设置发送失败状态，并退出循环
                     requestStatus[m_clientFd].m_status = HANDLE_ERROR;
-                    std::cout << outHead("error") << "发送响应体和消息首部时返回 -1 (errno = " << errno << ")" << std::endl;
+                    LOG_ERROR("发送响应体和消息首部时返回 -1 (errno = %d)", errno);
                     break;
                 }
                 // 如果缓冲区已满，退出循环，下面会重置 EPOLLOUT 事件，等待下次进入函数继续发送
@@ -568,12 +579,12 @@ void HandleSend::process() {
             if(responseStatus[m_clientFd].m_curStatusHasSendLen >= responseStatus[m_clientFd].m_beforeBodyMsgLen){
                 responseStatus[m_clientFd].m_status = HANDLE_BODY;     // 设置为正在处理消息体的状态
                 responseStatus[m_clientFd].m_curStatusHasSendLen = 0;   // 设置已经发送的数据长度为 0
-                std::cout << outHead("info") << "客户端 " << m_clientFd << " 响应消息的状态行和消息首部发送完成，正在发送消息体..." << std::endl;
+                LOG_INFO("客户端 %d 响应消息的状态行和消息首部发送完成，正在发送消息体...", m_clientFd);
             }
 
             // 如果发送的是文件，输出提示信息
             if(responseStatus[m_clientFd].m_bodyType == FILE_TYPE){
-                std::cout << outHead("info") << "客户端 " << m_clientFd << " 请求的是文件，开始发送文件 " << responseStatus[m_clientFd].m_bodyFileName << " ..." << std::endl;
+                LOG_INFO("客户端 %d 请求的是文件，开始发送文件 %s ...", m_clientFd, responseStatus[m_clientFd].m_bodyFileName.c_str());
             }
         }
 
@@ -587,7 +598,7 @@ void HandleSend::process() {
                 if(sentLen == -1){
                     if(errno != EAGAIN){
                         requestStatus[m_clientFd].m_status = HANDLE_ERROR;
-                        std::cout << outHead("error") << "发送 JSON 消息体时返回 -1 (errno = " << errno << ")" << std::endl;
+                        LOG_ERROR("发送 JSON 消息体时返回 -1 (errno = %d)", errno);
                         break;
                     }
                     break;
@@ -597,7 +608,7 @@ void HandleSend::process() {
                 if(responseStatus[m_clientFd].m_curStatusHasSendLen >= responseStatus[m_clientFd].m_msgBodyLen){
                     responseStatus[m_clientFd].m_status = HADNLE_COMPLETE;
                     responseStatus[m_clientFd].m_curStatusHasSendLen = 0;
-                    std::cout << outHead("info") << "客户端 " << m_clientFd << " 的JSON响应发送成功" << std::endl;
+                    LOG_INFO("客户端 %d 的JSON响应发送成功", m_clientFd);
                     break;
                 }
             }else if(responseStatus[m_clientFd].m_bodyType == HTML_TYPE){
@@ -608,7 +619,7 @@ void HandleSend::process() {
                     if(errno != EAGAIN){
                         // 如果不是缓冲区满，设置发送失败状态，并退出循环
                         requestStatus[m_clientFd].m_status = HANDLE_ERROR;
-                        std::cout << outHead("error") << "发送 HTML 消息体时返回 -1 (errno = " << errno << ")" << std::endl;
+                        LOG_ERROR("发送 HTML 消息体时返回 -1 (errno = %d)", errno);
                         break;
                     }
                     
@@ -621,7 +632,7 @@ void HandleSend::process() {
                 if(responseStatus[m_clientFd].m_curStatusHasSendLen >= responseStatus[m_clientFd].m_msgBodyLen){
                     responseStatus[m_clientFd].m_status = HADNLE_COMPLETE;     // 设置为正在处理消息体的状态
                     responseStatus[m_clientFd].m_curStatusHasSendLen = 0;   // 设置已经发送的数据长度为 0
-                    std::cout << outHead("info") << "客户端 " << m_clientFd << " 请求的是 HTML 文件，文件发送成功" << std::endl;
+                    LOG_INFO("客户端 %d 请求的是 HTML 文件，文件发送成功", m_clientFd);
                     break;
                 }
 
@@ -637,7 +648,7 @@ void HandleSend::process() {
                     if(errno != EAGAIN){
                         // 如果不是缓冲区满，设置发送失败状态
                         requestStatus[m_clientFd].m_status = HANDLE_ERROR;
-                        std::cout << outHead("error") << "发送文件时返回 -1 (errno = " << errno << ")" << std::endl;
+                        LOG_ERROR("发送文件时返回 -1 (errno = %d)", errno);
                         break;
                     }
                     // 如果缓冲区已满，退出循环，下面会重置 EPOLLOUT 事件，等待下次进入函数继续发送
@@ -652,7 +663,7 @@ void HandleSend::process() {
                     responseStatus[m_clientFd].m_status = HADNLE_COMPLETE;     // 设置为事件处理完成
                     responseStatus[m_clientFd].m_curStatusHasSendLen = 0;       // 设置已经发送的数据长度为 0
 
-                    std::cout << outHead("info") << "客户端 " << m_clientFd << " 请求的文件发送完成" << std::endl;
+                    LOG_INFO("客户端 %d 请求的文件发送完成", m_clientFd);
                     break;
                 }
 
@@ -660,7 +671,7 @@ void HandleSend::process() {
                 // 消息体为空时直接进入下个状态，目前用于重定向报文的消息体发送
                 responseStatus[m_clientFd].m_status = HADNLE_COMPLETE;       // 设置为事件处理完成
                 responseStatus[m_clientFd].m_curStatusHasSendLen = 0;         // 设置已经发送的数据长度为 0
-                std::cout << outHead("info") << "客户端 " << m_clientFd << " 的重定向报文发送成功" << std::endl;
+                LOG_INFO("客户端 %d 的重定向报文发送成功", m_clientFd);
                 break;
             }
         }
@@ -675,7 +686,7 @@ void HandleSend::process() {
         // 完成发送数据后删除该响应
         responseStatus.erase(m_clientFd);
         modifyWaitFd(m_epollFd, m_clientFd, true, true, false);                            // 不再监听写事件
-        std::cout << outHead("info") << "客户端 " << m_clientFd << " 的响应报文发送成功" << std::endl;
+        LOG_INFO("客户端 %d 的响应报文发送成功", m_clientFd);
     }else if(responseStatus[m_clientFd].m_status == HANDLE_ERROR){
         // 如果发送失败，删除该响应，删除监听该文件描述符，关闭连接
         responseStatus.erase(m_clientFd);
@@ -684,7 +695,7 @@ void HandleSend::process() {
         // 关闭文件描述符
         shutdown(m_clientFd, SHUT_WR);
         close(m_clientFd);
-        std::cout << outHead("error") << "客户端 " << m_clientFd << " 的响应报文发送失败，关闭相关的文件描述符" << std::endl;
+        LOG_ERROR("客户端 %d 的响应报文发送失败，关闭相关的文件描述符", m_clientFd);
     }else{                      // 如果不是完成了数据传输或出错，应该重置 EPOLLSHOT 事件，保证写事件可以继续产生，继续传输数据
         modifyWaitFd(m_epollFd, m_clientFd, true, true, true);
 
