@@ -117,8 +117,8 @@ public:
     std::string m_beforeBodyMsg;                            // 消息体之前的所有数据
     int m_beforeBodyMsgLen;                                 // 消息体之前的所有数据的长度
 
-    std::string m_html_msgBody;                             // 在字符串中保存 HTML 类型的消息体
-    unsigned long m_html_msgBodyLen;                        // 消息体的长度
+    std::string m_msgBody;                                  // 在字符串中保存 HTML / JSON 或其它类型的消息体
+    unsigned long m_msgBodyLen;                             // 消息体的长度
 
     int m_fileMsgFd;                                        // 文件类型的消息体保存文件描述符
 
