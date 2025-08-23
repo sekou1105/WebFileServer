@@ -4,6 +4,8 @@
 #include <dirent.h>
 #include <fstream>
 #include <vector>
+#include <string>
+#include <unordered_map>
 #include <cstdio>
 
 #include <sys/stat.h>
