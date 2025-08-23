@@ -147,6 +147,9 @@ int WebServer::wait_epoll() {
     // 标识服务器是否暂停
     is_stop = false;
 
+    // 创建事件保存事件的临时指针
+    EventBase *event = nullptr;
+
     while(!is_stop) {
         int resNum = epoll_wait(m_epollfd, resEvents, MAX_RESEVENT_SIZE, -1);
         //如果出错，直接退出（因为事件发生导致返回-1时，errno会置ENITR，需要在事件处理函数中保留errno）
@@ -154,58 +157,50 @@ int WebServer::wait_epoll() {
             LOG_ERROR("Epoll wait failed");
             return -1;
         }
+
         // 分发事件
+        std::string eventType;
         for(int i = 0; i < resNum; ++i){
-            int curfd = resEvents[i].data.fd;
-            uint32_t ev = resEvents[i].events;
+            int resfd = resEvents[i].data.fd;
+            if(resfd == m_listenfd){
+                LOG_INFO("有新的连接请求");
+                // 构建接受连接的事件
+                event = new AcceptConn(m_listenfd, m_epollfd);
+                eventType = "新连接事件";
+            }else if((resfd == eventHandlerPipe[0]) && (resEvents[i].events & EPOLLIN)){
+                // 如果有事件发生，执行事件处理函数
+                
+                eventType = "新信号事件";
+            }else if(resEvents[i].events & EPOLLIN){
+                // 构建读取客户端数据的事件
+                event = new HandleRecv(resEvents[i].data.fd, m_epollfd);
+                eventType = "新可读事件";
 
-            // 监听套接字，有新连接
-            if(curfd == m_listenfd){
-                AcceptConn acceptEvent(m_listenfd, m_epollfd);
-                acceptEvent.process();
+            }else if(resEvents[i].events & EPOLLOUT){
+                // 套接字可以发送数据，构建可以发送数据的事件
+                event = new HandleSend(resEvents[i].data.fd, m_epollfd);
+                eventType = "新可写事件";
+            }
+            if(event == nullptr){
                 continue;
             }
-
-            // 统一事件源的信号管道
-            if(curfd == eventHandlerPipe[0]){
-                // 读取所有的信号字节
-                char sigbuf[64];
-                while(true){
-                    int n = recv(eventHandlerPipe[0], sigbuf, sizeof(sigbuf), 0);
-                    if(n <= 0){
-                        break;
-                    }
-                    for(int k = 0; k < n; ++k){
-                        int signo = static_cast<unsigned char>(sigbuf[k]);
-                        if(signo == SIGINT || signo == SIGTERM){
-                            is_stop = true;
-                        }
-                    }
-                }
-                continue;
-            }
-
-            // 错误或挂断，直接关闭
-            if(ev & (EPOLLHUP | EPOLLERR)){
-                deleteWaitFd(m_epollfd, curfd);
-                shutdown(curfd, SHUT_RDWR);
-                close(curfd);
-                continue;
-            }
-
-            // 可读事件 -> 处理请求读取/解析（含文件上传）
-            if(ev & EPOLLIN){
-                HandleRecv recvEvent(curfd, m_epollfd);
-                recvEvent.process();
-            }
-
-            // 可写事件 -> 处理响应发送（文件列表/下载/重定向）
-            if(ev & EPOLLOUT){
-                HandleSend sendEvent(curfd, m_epollfd);
-                sendEvent.process();
-            }
+            // 将事件加入线程池的待处理队列。在线程池中，事件执行完后销毁事件，可以修改为智能指针自动释放
+            m_thread_pool->appendEvent(event, eventType);
+            
+            // 将 event 置空
+            event = nullptr;
         }
     }
     
+    return 0;
+}
+
+//创建线程池
+int WebServer::createThreadPool(int threadNum) {
+    m_thread_pool = new ThreadPool(threadNum);
+    if(m_thread_pool == nullptr){
+        LOG_ERROR("线程创建失败");
+        return -1;
+    }
     return 0;
 }

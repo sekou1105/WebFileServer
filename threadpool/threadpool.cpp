@@ -31,6 +31,9 @@ ThreadPool::ThreadPool(int threadNum):m_thread_num(threadNum) {
     m_threads = new pthread_t[m_thread_num];
     for(int i = 0; i < m_thread_num; ++i) {
         ThreadArgs* args = new ThreadArgs;
+        if(!args){
+            throw std::runtime_error("线程参数结构体new失败");
+        }
         args->pool = this;
         args->threadId = i;
         //创建线程
@@ -57,7 +60,7 @@ ThreadPool::~ThreadPool() {
 }
 
 int ThreadPool::appendEvent(EventBase* event, const std::string eventType){
-    int ret = 0;
+    bool ret = true;
     // 事件队列加锁
     ret = queueLocker.lock();
     if(!ret){
@@ -66,7 +69,7 @@ int ThreadPool::appendEvent(EventBase* event, const std::string eventType){
     }
     // 向队列中添加事件
     m_workQueue.push(event);
-    LOG_INFO("添加成功，线程池事件队列中剩余的事件个数：%d", m_workQueue.size());
+    LOG_INFO("%s 添加成功，线程池事件队列中剩余的事件个数：%d", eventType.c_str(), m_workQueue.size());
     
     // 事件队列解锁
     ret = queueLocker.unlock();
@@ -77,7 +80,7 @@ int ThreadPool::appendEvent(EventBase* event, const std::string eventType){
     // 事件队列的信号量加一
 
     ret = queueEventSem.post();
-    if(ret != 0){
+    if(!ret){
         LOG_ERROR("事件队列信号量 post 失败");
         return -3;
     }

@@ -41,7 +41,7 @@ public:
     int wait_epoll();
 
     //创建线程池
-    //int createThreadPool(int threadNum = 8);
+    int createThreadPool(int threadNum = 8);
 
 private:
     int m_listenfd;             //服务器端的套接字
@@ -51,7 +51,7 @@ private:
 
     static int eventHandlerPipe[2];             // 用于统一事件源传递信号的管道
     epoll_event resEvents[MAX_RESEVENT_SIZE];   // 保存 epoll_wait 结果的数组
-    //ThreadPool *m_thread_pool;
+    ThreadPool *m_thread_pool;
 
 };
 

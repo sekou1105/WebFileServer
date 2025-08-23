@@ -10,8 +10,15 @@ int main(int argc, char *argv[])
 
     server.init();
 
+    //创建线程池
+    int ret = server.createThreadPool();
+    if(ret != 0){
+        LOG_ERROR("create threadpool failed.");
+        return -1;
+    }
+
     int port = 8888;
-    int ret = server.create_listenfd(port);
+    ret = server.create_listenfd(port);
     if(ret != 0){
         LOG_ERROR("create listenfd failed.");
         return -2;
