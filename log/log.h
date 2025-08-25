@@ -5,8 +5,10 @@
 #include <stdarg.h>
 #include <string.h>
 #include <time.h>
+#include <sys/time.h>
+#include <string>
 
-#include "../threadpool/threadpool.h"
+#include "block_queue.h"
 
 /*
     单例模式的日志类，构造和析构函数权限private。
@@ -50,12 +52,10 @@ private:
     long long m_count;      //日志行数
     int m_today;            //日志天数
     char *m_buf;            //日志缓冲区
-    //block_queue<std::string> m_log_queue;
-    bool m_is_async;
+    BlockQueue<std::string> *m_log_queue;    //阻塞队列
+    bool m_is_async;        //是否同步
     Locker m_mutex;
     int m_close_log;        //关闭日志标志
-
-
 };
 
 // C 风格的初始化与运行时修改接口（在 log.h 暴露，便于全局调用）

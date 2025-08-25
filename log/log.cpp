@@ -1,6 +1,4 @@
 #include "log.h"
-#include <sys/time.h>
-#include <string>
 
 LOG* LOG::get_instance() {
     static LOG instance;
@@ -21,10 +19,31 @@ LOG::~LOG()
     }
 }
 
+void *LOG::flush_log_thread(void *args){
+    LOG::get_instance()->async_write_log();
+    return nullptr;
+}
+
+void *LOG::async_write_log(){
+    std::string single_log;
+    //从阻塞队列中取出一个日志string，写入文件
+    while (m_log_queue->pop(single_log))
+    {
+        m_mutex.lock();
+        fputs(single_log.c_str(), m_fp);
+        m_mutex.unlock();
+    }
+    return nullptr;
+}
+
 bool LOG::init(const char *file_name, int close_log, int log_buf_size, int split_lines, int max_queue_size) {
     if (max_queue_size >= 1) {
+        printf("开启异步日志\n");
         m_is_async = true;
-        // Initialize the block queue here if needed
+        m_log_queue = new BlockQueue<std::string>(max_queue_size);
+        pthread_t tid;
+        //flush_log_thread为回调函数,这里表示创建线程异步写日志
+        pthread_create(&tid, NULL, flush_log_thread, NULL);
     }
 
     m_close_log = close_log;
@@ -116,11 +135,10 @@ void LOG::write_log(int level, const char *format, ...) {
 
     m_mutex.unlock();
 
-    //if (m_is_async && !m_log_queue->full())
-    if (m_is_async)
+    if (m_is_async && !m_log_queue->full())
     {
-        //m_log_queue->push(log_str);
-        printf("异步写入日志，略\n");
+        m_log_queue->push(log_str);
+        //printf("异步写入日志，略\n");
     }
     else
     {
